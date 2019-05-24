@@ -6,7 +6,7 @@ open import Relation.Binary.Core
 open import Agda.Builtin.Float
 open import Data.Product hiding ( map )
 open import Data.Sum hiding (map)
-
+open import Equivalence
 
 data Bool : Set where
   True : Bool
@@ -40,6 +40,11 @@ data Vect {l} : ℕ → Set l → Set l where
   _::_ : {n : ℕ} → {a : Set l} → a → Vect n a → Vect (S n) a 
 
 
+toList : {l : Level} {a : Set l} {n : ℕ} → Vect n a → List a 
+toList [] = []
+toList (x :: ys) = x :: (toList ys)
+
+
 vmap : {k l : Level} → {n : ℕ} → {a : Set k} → {b : Set l} → (a → b) → Vect n a → Vect n b
 vmap _ [] = []
 vmap f (x :: xs) = (f x :: vmap f xs) 
@@ -49,22 +54,6 @@ _!_ [] ()
 _!_ (x :: xs) FZ     = x
 _!_ (x :: xs) (FS k) = xs ! k
 
-{-
-data HVect {l} : {n : ℕ} → (ts : Vect n (Set l)) → Set l where
-  [] : HVect []
-  _::_ : {n : ℕ} → {t : Set l} → {ts : Vect n (Set l)} → t → HVect ts → HVect (t :: ts)
-
-
-_!!_ : {l : Level} → {n : ℕ} → {ts : Vect n (Set l)} → HVect ts → (i : Fin n) → ts ! i
-_!!_ [] ()
-_!!_ (x :: xs) FZ     = x
-_!!_ (x :: xs) (FS k) = xs !! k
--}
-
-_∘_ : {a b c : Level} {A : Set a} {B : A → Set b} {C : {x : A} → B x → Set c} →
-      (∀ {x} (y : B x) → C y) → (g : (x : A) → B x) →
-      ((x : A) → C (g x))
-f ∘ g = λ x → f (g x)
 
 
 
@@ -97,6 +86,12 @@ sum : List Float → Float
 sum = foldr _+_ zero
 
 
+
+
+
+
+
+
 contradiction : {x : Bool} → {l : Level} → {a : Set l} → x ≡ True → x ≡ False → a
 contradiction {True} refl ()
 contradiction {False} ()
@@ -105,6 +100,21 @@ contradiction {False} ()
 contradictionM : {l1 l2 : Level} → {a : Set l1} → {b : Set l2} → {x : Maybe a} → x ≡ Nothing → Σ a (λ y → x ≡ Just y) → b
 contradictionM {x = Nothing} refl ()
 contradictionM {x = Just y} ()
+
+
+
+
+
+lala : {n : ℕ} → {ps : Fin (S n) → Bool} → {tn : ℕ} → {tns : Vect n ℕ} → ps FZ ≡ False → invImageNat (tn :: tns) ps ≡ invImageNat tns (ps ∘ FS)
+lala {ps = ps} eq with (ps FZ)
+... | True  = contradiction refl eq
+... | False = refl
+
+
+lolo : {n : ℕ} → {ps : Fin (S n) → Bool} → {tn : ℕ} → {tns : Vect n ℕ} → ps FZ ≡ True → invImageNat (tn :: tns) ps ≡ tn :: invImageNat tns (ps ∘ FS)
+lolo {ps = ps} eq with (ps FZ)
+... | True = refl
+... | False = contradiction eq refl
 
 
 
@@ -118,6 +128,14 @@ Cases False = (False , inj₂ refl)
 
 
 
+
+data Singleton {a} {A : Set a} (x : A) : Set a where
+  _with≡_ : (y : A) → x ≡ y → Singleton x
+
+inspect : ∀ {a} {A : Set a} (x : A) → Singleton x
+inspect x = x with≡ refl
+
+
 data BayesNet : {n : ℕ} → Vect n ℕ → Set₁ where
      Nil : BayesNet []
      Node : {size : ℕ} → {tns : Vect size ℕ} →
@@ -129,11 +147,33 @@ data BayesNet : {n : ℕ} → Vect n ℕ → Set₁ where
 
 
 
-data Singleton {a} {A : Set a} (x : A) : Set a where
-  _with≡_ : (y : A) → x ≡ y → Singleton x
+apply1 : {n : ℕ} → {tns : Vect n ℕ} → {ps : Fin n → Bool} → (HList (map Fin (invImageNat tns ps)) → Float) → HList (map Fin (toList tns)) → Float
+apply1 {Z} f _ = f []
+apply1 {S n} {tn :: tns} {ps} f (x :: yzs) with inspect (ps FZ) | f
+...                             | False  with≡ eqF | f' rewrite (lala {n} {ps} {tn} {tns} eqF) = apply1 {tns = tns} f' yzs
+...                             | True with≡ eqT | f' rewrite (lolo {n} {ps} {tn} {tns} eqT) = apply1 {tns = tns} (λ ws → f' (x :: ws)) yzs
 
-inspect : ∀ {a} {A : Set a} (x : A) → Singleton x
-inspect x = x with≡ refl
+
+density : {n : ℕ} → {tns : Vect n ℕ} → BayesNet tns → HList (map Fin (toList tns)) → Float
+density Nil _ = one
+density (Node subNet tn ps cpt) (x :: yzs) = (apply1 (cpt x) yzs) * density subNet yzs
+
+
+
+maybeToList : {k : ℕ} → Maybe (Fin k) → List (Fin k)
+maybeToList {k} Nothing = everyFin k
+maybeToList (Just i) = i :: [] 
+
+
+
+probability1 : {n : ℕ} → {tns : Vect n ℕ} → BayesNet tns → HList (map (List ∘ Fin) (toList tns)) → Float
+probability1 {tns = tns} network l rewrite =sym (map-∘-cong Fin List (toList tns)) = sum (map (density network) (listΠ l))
+
+
+
+margProb1 : {n : ℕ} → {tns : Vect n ℕ} → BayesNet tns → HList (map (Maybe ∘ Fin) (toList tns)) → Float
+margProb1 network = (probability1 network) ∘ (hmap maybeToList)
+
 
 
 
@@ -162,37 +202,33 @@ splitCases {S n} {tn :: tns} ps args with inspect (ps FZ) | (args FZ)
                         appendNothing ys (FS i) = ys i
 
 
-lala : {n : ℕ} → {ps : Fin (S n) → Bool} → {tn : ℕ} → {tns : Vect n ℕ} → ps FZ ≡ False → invImageNat (tn :: tns) ps ≡ invImageNat tns (ps ∘ FS)
-lala {ps = ps} eq with (ps FZ)
-... | True  = contradiction refl eq
-... | False = refl
 
 
-lolo : {n : ℕ} → {ps : Fin (S n) → Bool} → {tn : ℕ} → {tns : Vect n ℕ} → ps FZ ≡ True → invImageNat (tn :: tns) ps ≡ tn :: invImageNat tns (ps ∘ FS)
-lolo {ps = ps} eq with (ps FZ)
-... | True = refl
-... | False = contradiction eq refl
+apply2 : {n : ℕ} → {tns : Vect n ℕ} → {ps : Fin n → Bool} →
+         (HList (map Fin (invImageNat tns ps)) → Float) →
+         (args* : (i : Fin n) → Maybe (Fin (tns ! i))) →
+         ((i : Fin n) → args* i ≡ Nothing → ps i ≡ False) → Float
+apply2 {Z} f _ _       = f []
+apply2 {S n} {tn :: tns} {ps} f args* prf with inspect (args* FZ) | inspect (ps FZ) | f
+... | _                 | False with≡ eqF | f' rewrite (lala {n} {ps} {tn} {tns} eqF) = apply2 {tns = tns} f' (args* ∘ FS) (prf ∘ FS)
+... | Nothing with≡ eqN | True with≡ eqT | _ = contradiction eqT (prf FZ eqN)
+... | (Just x) with≡ eJ | True with≡ eqT | f' rewrite (lolo {n} {ps} {tn} {tns} eqT) = apply2 {tns = tns} (λ ys → f' (x :: ys)) (args* ∘ FS) (prf ∘ FS)
 
 
 
-margProb : {n : ℕ} → {tns : Vect n ℕ} → BayesNet tns → ((i : Fin n) → Maybe (Fin (tns ! i))) → Float
-margProb Nil _ = one
-margProb {S n} {tn :: tns} (Node subNet .tn ps cpt) args with (args FZ)
-...   | Nothing  = margProb subNet (args ∘ FS) 
+
+
+
+
+margProb2 : {n : ℕ} → {tns : Vect n ℕ} → BayesNet tns → ((i : Fin n) → Maybe (Fin (tns ! i))) → Float
+margProb2 Nil _ = one
+margProb2 {S n} {tn :: tns} (Node subNet .tn ps cpt) args with (args FZ)
+...   | Nothing  = margProb2 subNet (args ∘ FS) 
 ...   | (Just x) = sum (map (λ args* → fullProb (proj₁ ∘ args*) (proj₂ ∘ args*)) (splitCases {n} {tns} ps (args ∘ FS)))
            where fullProb : (args' : (i : Fin n) → Maybe (Fin (tns ! i))) →
                             ((i : Fin n) → args' i ≡ Nothing → ps i ≡ False) → Float
-                 fullProb args' prf = (apply (cpt x) args' prf) * margProb subNet args'
-                    where apply : {n : ℕ} → {tns : Vect n ℕ} → {ps : Fin n → Bool} →
-                                  (HList (map Fin (invImageNat tns ps)) → Float) →
-                                  (args* : (i : Fin n) → Maybe (Fin (tns ! i))) →
-                                  ((i : Fin n) → args* i ≡ Nothing → ps i ≡ False) → Float
-                          apply {Z} f _ _       = f []
-                          apply {S n} {tn :: tns} {ps} f args* prf with inspect (args* FZ) | inspect (ps FZ) | f
-                          ... | _                 | False with≡ eqF | f' rewrite (lala {n} {ps} {tn} {tns} eqF) = apply {tns = tns} f' (args* ∘ FS) (prf ∘ FS)
-                          ... | Nothing with≡ eqN | True with≡ eqT | _ = contradiction eqT (prf FZ eqN)
-                          ... | (Just x) with≡ eJ | True with≡ eqT | f' rewrite (lolo {n} {ps} {tn} {tns} eqT) = apply {tns = tns} (λ ys → f' (x :: ys)) (args* ∘ FS) (prf ∘ FS)
-
+                 fullProb args' prf = (apply2 (cpt x) args' prf) * margProb2 subNet args'
+                    
 
 
 
